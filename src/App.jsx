@@ -120,7 +120,7 @@ function AppContent() {
               <div className="eyebrow">MARK · نظام إدارة التعلّم</div>
 
               <h1>
-                منصتك للتفوّق في <span className="accent">اللغة الإنجليزية</span>
+                منصتك للتفوّق في <span className="accent">جميع المجالات</span>
               </h1>
 
               <p className="sub">
