@@ -277,12 +277,19 @@ export async function hydrateUsersFromSupabase() {
   const normalized = {};
 
   data.forEach((row) => {
-    normalized[row.id] = {
+    const userRecord = {
       name: row.name,
       points: Number(row.points ?? 0),
       history: Array.isArray(row.history) ? row.history : [],
       completedCourses: row.completed_courses ?? row.completedCourses ?? {},
     };
+
+    normalized[row.id] = userRecord;
+
+    const nameKey = normalizeKey(row.name);
+    if (nameKey && !(nameKey in normalized)) {
+      normalized[nameKey] = userRecord;
+    }
   });
 
   localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));

@@ -1,4 +1,4 @@
-﻿import { useState } from "react";
+﻿import { useEffect, useState } from "react";
 import {
   HashRouter,
   Navigate,
@@ -6,7 +6,12 @@ import {
   Routes,
   useNavigate,
 } from "react-router-dom";
-import { getUsers, normalizeKey } from "./storage";
+import {
+  getUsers,
+  hydrateCoursesFromSupabase,
+  hydrateUsersFromSupabase,
+  normalizeKey,
+} from "./storage";
 import Student from "./pages/Student";
 import Admin from "./pages/admin";
 
@@ -20,6 +25,11 @@ export default function App() {
 
 function AppContent() {
   const navigate = useNavigate();
+
+  useEffect(() => {
+    hydrateUsersFromSupabase();
+    hydrateCoursesFromSupabase();
+  }, []);
 
   const [studentKey, setStudentKey] = useState(() => {
     return sessionStorage.getItem("lms:studentKey") || "";
@@ -43,15 +53,26 @@ function AppContent() {
     }
 
     const users = getUsers();
-    const key = normalizeKey(name);
+    const normalizedInput = normalizeKey(name);
+    const matchedKey =
+      users[normalizedInput]
+        ? normalizedInput
+        : Object.keys(users).find((key) => {
+            const candidate = users[key];
+            return (
+              normalizeKey(candidate?.name || "") === normalizedInput ||
+              key === normalizedInput ||
+              String(candidate?.name || "").trim() === name
+            );
+          });
 
-    if (!users[key]) {
+    if (!matchedKey) {
       setError("الطالب غير موجود. تأكد من كتابة الاسم كما سجله الأدمن.");
       return;
     }
 
-    sessionStorage.setItem("lms:studentKey", key);
-    setStudentKey(key);
+    sessionStorage.setItem("lms:studentKey", matchedKey);
+    setStudentKey(matchedKey);
     setError("");
     navigate("/student");
   }
