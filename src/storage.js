@@ -221,6 +221,37 @@ export function getCourses() {
   }
 }
 
+async function syncSupabaseDeletes(table, rows, idField = "id") {
+  if (!supabase || !Array.isArray(rows)) {
+    return;
+  }
+
+  const keepIds = rows
+    .map((row) => String(row[idField]))
+    .filter(Boolean);
+
+  if (keepIds.length === 0) {
+    const { error } = await supabase.from(table).delete().neq(idField, "");
+    if (error) {
+      console.error(`تعذر حذف البيانات القديمة من ${table}:`, error);
+    }
+    return;
+  }
+
+  const quotedIds = keepIds
+    .map((id) => `"${String(id).replace(/"/g, '""')}"`)
+    .join(",");
+
+  const { error } = await supabase
+    .from(table)
+    .delete()
+    .not(idField, "in", `(${quotedIds})`);
+
+  if (error) {
+    console.error(`تعذر حذف البيانات القديمة من ${table}:`, error);
+  }
+}
+
 export function saveCourses(courses) {
   try {
     localStorage.setItem(
@@ -240,14 +271,18 @@ export function saveCourses(courses) {
         quiz: course.quiz,
       }));
 
-      supabase
-        .from("courses")
-        .upsert(rows, { onConflict: "id" })
-        .then(({ error }) => {
-          if (error) {
-            console.error("تعذر مزامنة الكورسات مع Supabase:", error);
-          }
-        });
+      void (async () => {
+        const { error: upsertError } = await supabase
+          .from("courses")
+          .upsert(rows, { onConflict: "id" });
+
+        if (upsertError) {
+          console.error("تعذر مزامنة الكورسات مع Supabase:", upsertError);
+          return;
+        }
+
+        await syncSupabaseDeletes("courses", rows);
+      })();
     }
 
     return true;
@@ -333,14 +368,18 @@ export function saveUsers(users) {
         completed_courses: user.completedCourses ?? {},
       }));
 
-      supabase
-        .from("users")
-        .upsert(rows, { onConflict: "id" })
-        .then(({ error }) => {
-          if (error) {
-            console.error("تعذر مزامنة الطلاب مع Supabase:", error);
-          }
-        });
+      void (async () => {
+        const { error: upsertError } = await supabase
+          .from("users")
+          .upsert(rows, { onConflict: "id" });
+
+        if (upsertError) {
+          console.error("تعذر مزامنة الطلاب مع Supabase:", upsertError);
+          return;
+        }
+
+        await syncSupabaseDeletes("users", rows);
+      })();
     }
 
     return true;
