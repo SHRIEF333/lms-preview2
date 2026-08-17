@@ -1,6 +1,6 @@
 ﻿import { useState } from "react";
 import {
-  BrowserRouter,
+  HashRouter,
   Navigate,
   Route,
   Routes,
@@ -12,9 +12,9 @@ import Admin from "./pages/admin";
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <HashRouter>
       <AppContent />
-    </BrowserRouter>
+    </HashRouter>
   );
 }
 
