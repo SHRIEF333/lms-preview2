@@ -1,5 +1,44 @@
+import { createClient } from "@supabase/supabase-js";
+
 const STORAGE_KEY = "lms:users";
 const COURSES_STORAGE_KEY = "lms:courses";
+const SHARED_CHANNEL = "lms_shared_channel";
+const SHARED_SYNC_KEY = "lms:sync";
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+export const supabase =
+  supabaseUrl && supabaseAnonKey
+    ? createClient(supabaseUrl, supabaseAnonKey)
+    : null;
+
+export function hasSupabaseConfig() {
+  return Boolean(supabase);
+}
+
+function emitSharedUpdate(kind) {
+  const payload = {
+    kind,
+    timestamp: Date.now(),
+  };
+
+  try {
+    localStorage.setItem(SHARED_SYNC_KEY, JSON.stringify(payload));
+  } catch (error) {
+    console.warn("تعذر نشر تحديث الحالة المشتركة:", error);
+  }
+
+  if ("BroadcastChannel" in window) {
+    try {
+      const channel = new BroadcastChannel(SHARED_CHANNEL);
+      channel.postMessage(payload);
+      channel.close();
+    } catch (error) {
+      console.warn("تعذر استخدام BroadcastChannel:", error);
+    }
+  }
+}
 
 const SEED_USERS = {
   أحمد_علي: {
@@ -131,6 +170,37 @@ export function normalizeKey(name) {
   return String(name).trim().replace(/\s+/g, "_");
 }
 
+export async function hydrateCoursesFromSupabase() {
+  if (!supabase) {
+    return getCourses();
+  }
+
+  const { data, error } = await supabase.from("courses").select("*");
+
+  if (error) {
+    console.error("تعذر جلب الكورسات من Supabase:", error);
+    return getCourses();
+  }
+
+  if (!data || data.length === 0) {
+    localStorage.setItem(COURSES_STORAGE_KEY, JSON.stringify(SEED_COURSES));
+    return SEED_COURSES;
+  }
+
+  const normalized = data.map((row) => ({
+    id: row.id,
+    title: row.title,
+    category: row.category,
+    description: row.description ?? "",
+    videoUrl: row.video_url ?? row.videoUrl,
+    pointsReward: Number(row.points_reward ?? row.pointsReward ?? 200),
+    quiz: Array.isArray(row.quiz) ? row.quiz : [],
+  }));
+
+  localStorage.setItem(COURSES_STORAGE_KEY, JSON.stringify(normalized));
+  return normalized;
+}
+
 export function getCourses() {
   try {
     const saved = localStorage.getItem(COURSES_STORAGE_KEY);
@@ -157,11 +227,66 @@ export function saveCourses(courses) {
       COURSES_STORAGE_KEY,
       JSON.stringify(courses)
     );
+    emitSharedUpdate("courses");
+
+    if (supabase) {
+      const rows = courses.map((course) => ({
+        id: course.id,
+        title: course.title,
+        category: course.category,
+        description: course.description,
+        video_url: course.videoUrl,
+        points_reward: Number(course.pointsReward ?? 0),
+        quiz: course.quiz,
+      }));
+
+      supabase
+        .from("courses")
+        .upsert(rows, { onConflict: "id" })
+        .then(({ error }) => {
+          if (error) {
+            console.error("تعذر مزامنة الكورسات مع Supabase:", error);
+          }
+        });
+    }
+
     return true;
   } catch (error) {
     console.error("تعذر حفظ الكورسات:", error);
     return false;
   }
+}
+
+export async function hydrateUsersFromSupabase() {
+  if (!supabase) {
+    return getUsers();
+  }
+
+  const { data, error } = await supabase.from("users").select("*");
+
+  if (error) {
+    console.error("تعذر جلب الطلاب من Supabase:", error);
+    return getUsers();
+  }
+
+  if (!data || data.length === 0) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(SEED_USERS));
+    return SEED_USERS;
+  }
+
+  const normalized = {};
+
+  data.forEach((row) => {
+    normalized[row.id] = {
+      name: row.name,
+      points: Number(row.points ?? 0),
+      history: Array.isArray(row.history) ? row.history : [],
+      completedCourses: row.completed_courses ?? row.completedCourses ?? {},
+    };
+  });
+
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+  return normalized;
 }
 
 export function getUsers() {
@@ -190,6 +315,26 @@ export function saveUsers(users) {
       STORAGE_KEY,
       JSON.stringify(users)
     );
+    emitSharedUpdate("users");
+
+    if (supabase) {
+      const rows = Object.entries(users).map(([id, user]) => ({
+        id,
+        name: user.name,
+        points: Number(user.points ?? 0),
+        history: user.history ?? [],
+        completed_courses: user.completedCourses ?? {},
+      }));
+
+      supabase
+        .from("users")
+        .upsert(rows, { onConflict: "id" })
+        .then(({ error }) => {
+          if (error) {
+            console.error("تعذر مزامنة الطلاب مع Supabase:", error);
+          }
+        });
+    }
 
     return true;
   } catch (error) {
@@ -200,60 +345,90 @@ export function saveUsers(users) {
 
 export function subscribeToUsers(callback) {
   const handleStorage = (event) => {
-    if (
-      event.key === STORAGE_KEY &&
-      event.newValue
-    ) {
+    if (event.key === STORAGE_KEY && event.newValue) {
       try {
         callback(JSON.parse(event.newValue));
       } catch (error) {
-        console.error(
-          "تعذر قراءة البيانات الجديدة:",
-          error
-        );
+        console.error("تعذر قراءة البيانات الجديدة:", error);
+      }
+    }
+
+    if (event.key === SHARED_SYNC_KEY && event.newValue) {
+      try {
+        const payload = JSON.parse(event.newValue);
+        if (payload.kind === "users") {
+          callback(getUsers());
+        }
+      } catch (error) {
+        console.error("تعذر قراءة إشعار التحديث المشترك:", error);
       }
     }
   };
 
-  window.addEventListener(
-    "storage",
-    handleStorage
-  );
+  const handleChannelMessage = (event) => {
+    if (event?.data?.kind === "users") {
+      callback(getUsers());
+    }
+  };
+
+  window.addEventListener("storage", handleStorage);
+
+  let channel = null;
+  if ("BroadcastChannel" in window) {
+    channel = new BroadcastChannel(SHARED_CHANNEL);
+    channel.addEventListener("message", handleChannelMessage);
+  }
 
   return () => {
-    window.removeEventListener(
-      "storage",
-      handleStorage
-    );
+    window.removeEventListener("storage", handleStorage);
+    if (channel) {
+      channel.removeEventListener("message", handleChannelMessage);
+      channel.close();
+    }
   };
 }
 
 export function subscribeToCourses(callback) {
   const handleStorage = (event) => {
-    if (
-      event.key === COURSES_STORAGE_KEY &&
-      event.newValue
-    ) {
+    if (event.key === COURSES_STORAGE_KEY && event.newValue) {
       try {
         callback(JSON.parse(event.newValue));
       } catch (error) {
-        console.error(
-          "تعذر قراءة بيانات الكورسات الجديدة:",
-          error
-        );
+        console.error("تعذر قراءة بيانات الكورسات الجديدة:", error);
+      }
+    }
+
+    if (event.key === SHARED_SYNC_KEY && event.newValue) {
+      try {
+        const payload = JSON.parse(event.newValue);
+        if (payload.kind === "courses") {
+          callback(getCourses());
+        }
+      } catch (error) {
+        console.error("تعذر قراءة إشعار تحديث الكورسات:", error);
       }
     }
   };
 
-  window.addEventListener(
-    "storage",
-    handleStorage
-  );
+  const handleChannelMessage = (event) => {
+    if (event?.data?.kind === "courses") {
+      callback(getCourses());
+    }
+  };
+
+  window.addEventListener("storage", handleStorage);
+
+  let channel = null;
+  if ("BroadcastChannel" in window) {
+    channel = new BroadcastChannel(SHARED_CHANNEL);
+    channel.addEventListener("message", handleChannelMessage);
+  }
 
   return () => {
-    window.removeEventListener(
-      "storage",
-      handleStorage
-    );
+    window.removeEventListener("storage", handleStorage);
+    if (channel) {
+      channel.removeEventListener("message", handleChannelMessage);
+      channel.close();
+    }
   };
 }

@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="refresh" content="0; url=/lms-preview2/" />
+    <title>Redirecting...</title>
+    <script>
+      (() => {
+        const repoBase = '/lms-preview2';
+        const current = window.location.pathname;
+        const query = window.location.search || '';
+
+        if (current.startsWith(repoBase + '/')) {
+          const remainder = current.slice(repoBase.length) || '/';
+          const target = repoBase + '/#' + remainder.replace(/^\/+/, '');
+          window.history.replaceState(null, '', target + query);
+          window.location.replace(target + query);
+        } else {
+          window.location.replace(repoBase + '/');
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    Redirecting to the app...
+  </body>
+</html>
